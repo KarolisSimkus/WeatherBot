@@ -118,7 +118,7 @@ async def send_daily_weather():
         except Exception as e:
             print(f"Error sending message: {e}")
 
-        await asyncio.sleep(86400)  # Sleep for 24 hours
+        await asyncio.sleep(3600)  # Sleep for 24 hours
 
 @client.event
 async def on_ready():
