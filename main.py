@@ -1,5 +1,3 @@
-import asyncio
-
 import discord
 from discord.ext import commands
 import os
@@ -10,119 +8,153 @@ from datetime import datetime, UTC
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
-CHANNEL_ID = int(os.getenv('CHANNEL_ID'))
-CITY = "vilnius"
 
 handler = logging.FileHandler(filename='discord.log', encoding='utf-8', mode='w')
 intents = discord.Intents.default()
 intents.message_content = True
 
-client = discord.Client(intents=intents)
+bot = commands.Bot(command_prefix='!', intents=intents)
 
-'''
-def get_weather():
-    url = f"https://api.meteo.lt/v1/places/{CITY}/forecasts/long-term"
-    response = requests.get(url)
-    data = response.json()
+LOCATIONS = {
+    'vilnius': 'Vilnius',
+    'klaipeda': 'Klaipėda',
+}
 
-    # Print all data from meteo.lt
-    print("[meteo.lt full payload]", data)
+CONDITION_EMOJI = {
+    'clear': '☀️',
+    'partly-cloudy': '⛅',
+    'cloudy': '☁️',
+    'light-rain': '🌦',
+    'rain': '🌧',
+    'heavy-rain': '🌧',
+    'sleet': '🌨',
+    'light-snow': '❄️',
+    'snow': '❄️',
+    'heavy-snow': '❄️',
+    'fog': '🌫️',
+    'thunderstorms': '⛈️',
+    'isolated-thunderstorms': '⛈️',
+    'hail': '🌨',
+}
 
-    # Find closest forecast to now
-    now = datetime.now(timezone.utc).isoformat()
-    forecast = data["forecastTimestamps"][0]
 
-    temp = forecast["airTemperature"]
-    condition = forecast["conditionCode"]
+def fetch_forecasts(city_code: str) -> list:
+    url = f"https://api.meteo.lt/v1/places/{city_code}/forecasts/long-term"
+    response = requests.get(url, timeout=10)
+    response.raise_for_status()
+    return response.json()["forecastTimestamps"]
 
-    return f"🌦 Weather in {CITY.title()}:\nTemperature: {temp}°C\nCondition: {condition}"
-'''
 
-def get_weather():
-    url = f"https://api.meteo.lt/v1/places/{CITY}/forecasts/long-term"
-    response = requests.get(url)
-    data = response.json()
-
-    forecasts = data["forecastTimestamps"]
-    # today = datetime.now().astimezone().date()
-    # print("[meteo.lt full payload]", data)
-    first_time = datetime.fromisoformat(forecasts[0]["forecastTimeUtc"]).replace(tzinfo=UTC).astimezone()
-
-    target_date = first_time.date()
-
-    periods = {
-        "morning": None,
-        "day": None,
-        "evening": None,
-        "night": None
-    }
-
-    for f in forecasts:
-        time = datetime.fromisoformat(f["forecastTimeUtc"]).replace(tzinfo=UTC).astimezone()
-        if time.date() != target_date:
-            continue
-
-        hour = time.hour
-
-        if 6 <= hour <= 11 and periods["morning"] is None:
-            periods["morning"] = f
-        elif 12 <= hour <= 17 and periods["day"] is None:
-            periods["day"] = f
-        elif 18 <= hour <= 23 and periods["evening"] is None:
-            periods["evening"] = f
-        elif 0 <= hour <= 5 and periods["night"] is None:
-            periods["night"] = f
-
-    def format_period(label, data):
-        if not data:
-            return f"{label}: No data"
-
-        temp = data["airTemperature"]
-        feels = data["feelsLikeTemperature"]
-        wind = data["windSpeed"]
-        rain = data.get("precipitation", 0)
-        condition = data["conditionCode"].replace("-", " ").title()
-
-        return (
-            f"{label}\n"
-            f"  🌡 Temp: {temp}°C (feels {feels}°C)\n"
-            f"  🌧 Rain: {rain} mm\n"
-            f"  💨 Wind: {wind} m/s\n"
-            f"  ☁️ {condition}"
+def find_current(forecasts: list) -> dict:
+    now = datetime.now(UTC)
+    closest = min(
+        forecasts,
+        key=lambda f: abs(
+            (datetime.fromisoformat(f["forecastTimeUtc"]).replace(tzinfo=UTC) - now).total_seconds()
         )
+    )
+    return closest
 
-    timestamp = datetime.now(UTC).astimezone().isoformat()
 
-    message = (
-        f"🌦 **Weather in {CITY.title()} today**\n"
-        f"🕒 _Reported at: {timestamp}_\n\n"
-        f"🌅 {format_period('Morning', periods['morning'])}\n\n"
-        f"☀️ {format_period('Day', periods['day'])}\n\n"
-        f"🌇 {format_period('Evening', periods['evening'])}\n\n"
-        f"🌙 {format_period('Night', periods['night'])}"
+def format_current(city_name: str, f: dict) -> str:
+    time_utc = datetime.fromisoformat(f["forecastTimeUtc"]).replace(tzinfo=UTC)
+    local_time = time_utc.astimezone()
+    condition = f["conditionCode"]
+    emoji = CONDITION_EMOJI.get(condition, '🌡')
+    label = condition.replace('-', ' ').title()
+    rain = f.get("totalPrecipitation", 0)
+
+    return (
+        f"{emoji} **Current weather in {city_name}**\n"
+        f"🕒 {local_time.strftime('%H:%M')} local\n"
+        f"🌡 Temperature: **{f['airTemperature']}°C** (feels like {f['feelsLikeTemperature']}°C)\n"
+        f"☁️ Condition: {label}\n"
+        f"🌧 Precipitation: {rain} mm\n"
+        f"💨 Wind: {f['windSpeed']} m/s (gusts {f['windGust']} m/s)\n"
+        f"💧 Humidity: {f['relativeHumidity']}%"
     )
 
-    # print(time, time.date(), today)
-    
-    return message
+
+def format_full_day(city_name: str, forecasts: list) -> str:
+    first_time = datetime.fromisoformat(forecasts[0]["forecastTimeUtc"]).replace(tzinfo=UTC).astimezone()
+    target_date = first_time.date()
+
+    periods = {"Morning (6–11)": None, "Day (12–17)": None, "Evening (18–23)": None, "Night (0–5)": None}
+    hour_ranges = {"Morning (6–11)": range(6, 12), "Day (12–17)": range(12, 18), "Evening (18–23)": range(18, 24), "Night (0–5)": range(0, 6)}
+
+    for f in forecasts:
+        local = datetime.fromisoformat(f["forecastTimeUtc"]).replace(tzinfo=UTC).astimezone()
+        if local.date() != target_date:
+            continue
+        for label, hours in hour_ranges.items():
+            if local.hour in hours and periods[label] is None:
+                periods[label] = f
+
+    period_emojis = {"Morning (6–11)": "🌅", "Day (12–17)": "☀️", "Evening (18–23)": "🌇", "Night (0–5)": "🌙"}
+
+    def fmt(label, data):
+        if not data:
+            return f"{period_emojis[label]} **{label}**: No data"
+        condition = data["conditionCode"]
+        emoji = CONDITION_EMOJI.get(condition, '🌡')
+        cond_label = condition.replace('-', ' ').title()
+        rain = data.get("totalPrecipitation", 0)
+        return (
+            f"{period_emojis[label]} **{label}**\n"
+            f"  {emoji} {cond_label}\n"
+            f"  🌡 {data['airTemperature']}°C (feels {data['feelsLikeTemperature']}°C)\n"
+            f"  🌧 Precip: {rain} mm  💨 Wind: {data['windSpeed']} m/s\n"
+            f"  💧 Humidity: {data['relativeHumidity']}%"
+        )
+
+    date_str = target_date.strftime('%Y-%m-%d')
+    lines = [f"📅 **Full day forecast for {city_name} — {date_str}**\n"]
+    for label in ["Morning (6–11)", "Day (12–17)", "Evening (18–23)", "Night (0–5)"]:
+        lines.append(fmt(label, periods[label]))
+    return "\n\n".join(lines)
 
 
-async def send_daily_weather():
-    await client.wait_until_ready()
-    channel = client.get_channel(CHANNEL_ID)
-
-    while not client.is_closed():
-        try:
-            message = get_weather()
-            await channel.send(message)
-        except Exception as e:
-            print(f"Error sending message: {e}")
-
-        await asyncio.sleep(3600)  # Sleep for 24 hours
-
-@client.event
+@bot.event
 async def on_ready():
-    print(f"Logged in as {client.user}")
-    client.loop.create_task(send_daily_weather())
+    print(f"Logged in as {bot.user}")
 
-client.run(TOKEN, log_handler=handler, log_level=logging.DEBUG)
+
+@bot.command(name='Vilnius')
+async def vilnius_current(ctx):
+    try:
+        forecasts = fetch_forecasts('vilnius')
+        current = find_current(forecasts)
+        await ctx.send(format_current('Vilnius', current))
+    except Exception as e:
+        await ctx.send(f"Error fetching weather: {e}")
+
+
+@bot.command(name='Klaipeda')
+async def klaipeda_current(ctx):
+    try:
+        forecasts = fetch_forecasts('klaipeda')
+        current = find_current(forecasts)
+        await ctx.send(format_current('Klaipėda', current))
+    except Exception as e:
+        await ctx.send(f"Error fetching weather: {e}")
+
+
+@bot.command(name='F_Vilnius')
+async def vilnius_full(ctx):
+    try:
+        forecasts = fetch_forecasts('vilnius')
+        await ctx.send(format_full_day('Vilnius', forecasts))
+    except Exception as e:
+        await ctx.send(f"Error fetching weather: {e}")
+
+
+@bot.command(name='F_Klaipeda')
+async def klaipeda_full(ctx):
+    try:
+        forecasts = fetch_forecasts('klaipeda')
+        await ctx.send(format_full_day('Klaipėda', forecasts))
+    except Exception as e:
+        await ctx.send(f"Error fetching weather: {e}")
+
+
+bot.run(TOKEN, log_handler=handler, log_level=logging.DEBUG)
