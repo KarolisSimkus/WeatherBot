@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 import logging
 import requests
 from datetime import datetime, UTC
+from zoneinfo import ZoneInfo
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -58,7 +59,7 @@ def find_current(forecasts: list) -> dict:
 
 def format_current(city_name: str, f: dict) -> str:
     time_utc = datetime.fromisoformat(f["forecastTimeUtc"]).replace(tzinfo=UTC)
-    local_time = time_utc.astimezone(LOCAL_TZ)
+    local_time = time_utc.astimezone(ZoneInfo("Europe/Vilnius"))
     condition = f["conditionCode"]
     emoji = CONDITION_EMOJI.get(condition, '🌡')
     label = condition.replace('-', ' ').title()
@@ -76,14 +77,14 @@ def format_current(city_name: str, f: dict) -> str:
 
 
 def format_full_day(city_name: str, forecasts: list) -> str:
-    first_time = datetime.fromisoformat(forecasts[0]["forecastTimeUtc"]).replace(tzinfo=UTC).astimezone()
+    first_time = datetime.fromisoformat(forecasts[0]["forecastTimeUtc"]).replace(tzinfo=UTC).astimezone(ZoneInfo("Europe/Vilnius"))
     target_date = first_time.date()
 
     periods = {"Morning (6–11)": None, "Day (12–17)": None, "Evening (18–23)": None, "Night (0–5)": None}
     hour_ranges = {"Morning (6–11)": range(6, 12), "Day (12–17)": range(12, 18), "Evening (18–23)": range(18, 24), "Night (0–5)": range(0, 6)}
 
     for f in forecasts:
-        local = datetime.fromisoformat(f["forecastTimeUtc"]).replace(tzinfo=UTC).astimezone(LOCAL_TZ)
+        local = datetime.fromisoformat(f["forecastTimeUtc"]).replace(tzinfo=UTC).astimezone(ZoneInfo("Europe/Vilnius"))
         if local.date() != target_date:
             continue
         for label, hours in hour_ranges.items():
