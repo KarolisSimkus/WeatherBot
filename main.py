@@ -58,7 +58,7 @@ def find_current(forecasts: list) -> dict:
 
 def format_current(city_name: str, f: dict) -> str:
     time_utc = datetime.fromisoformat(f["forecastTimeUtc"]).replace(tzinfo=UTC)
-    local_time = time_utc.astimezone()
+    local_time = time_utc.astimezone(LOCAL_TZ)
     condition = f["conditionCode"]
     emoji = CONDITION_EMOJI.get(condition, '🌡')
     label = condition.replace('-', ' ').title()
@@ -83,7 +83,7 @@ def format_full_day(city_name: str, forecasts: list) -> str:
     hour_ranges = {"Morning (6–11)": range(6, 12), "Day (12–17)": range(12, 18), "Evening (18–23)": range(18, 24), "Night (0–5)": range(0, 6)}
 
     for f in forecasts:
-        local = datetime.fromisoformat(f["forecastTimeUtc"]).replace(tzinfo=UTC).astimezone()
+        local = datetime.fromisoformat(f["forecastTimeUtc"]).replace(tzinfo=UTC).astimezone(LOCAL_TZ)
         if local.date() != target_date:
             continue
         for label, hours in hour_ranges.items():
